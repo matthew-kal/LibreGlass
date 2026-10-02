@@ -10,14 +10,11 @@ int main()
         return 1;
     }
 
-    const auto hdmi_connector = device.findConnectedHdmiConnector();
-    if (!hdmi_connector) {
-        std::cerr << "No connected HDMI connector found on this DRM device.\n";
-        return 1;
-    }
-
-    std::cout << "Selected connected HDMI connector ID "
-              << *hdmi_connector << ".\n";
+    const auto& display = device.selectedDisplay();
+    std::cout << "Selected connector " << display.connectorId
+              << ", CRTC " << display.crtcId
+              << ", mode " << display.mode.hdisplay << 'x'
+              << display.mode.vdisplay << " (" << display.mode.name << ").\n";
 
     return 0;
 }
