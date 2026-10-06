@@ -2,12 +2,12 @@ CXX := g++
 CXXFLAGS := -std=c++20 -Wall -Wextra $(shell pkg-config --cflags libdrm)
 LDLIBS := $(shell pkg-config --libs libdrm)
 
-SOURCES := main.cpp src/drm_device.cpp src/drm_buffer.cpp
+SOURCES := main.cpp src/drm_device.cpp src/drm_buffer.cpp src/buffer_access.cpp
 BUILD_DIR ?= build
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(SOURCES:.cpp=.o))
 TARGET := $(BUILD_DIR)/libre-glass
 TEST_TARGET := $(BUILD_DIR)/drm-lifecycle-test
-TEST_OBJECTS := $(BUILD_DIR)/tests/drm_lifecycle_test.o $(BUILD_DIR)/src/drm_device.o $(BUILD_DIR)/src/drm_buffer.o
+TEST_OBJECTS := $(BUILD_DIR)/tests/drm_lifecycle_test.o $(BUILD_DIR)/src/drm_device.o $(BUILD_DIR)/src/drm_buffer.o $(BUILD_DIR)/src/buffer_access.o
 TEST_WRAPS := open close drmIsMaster drmSetMaster drmModeGetResources drmModeFreeResources \
               drmModeGetConnectorCurrent drmModeGetConnector drmModeFreeConnector \
               drmModeGetEncoder drmModeFreeEncoder drmModeGetCrtc drmModeFreeCrtc \
