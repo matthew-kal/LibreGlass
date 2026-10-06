@@ -2,23 +2,35 @@ CXX := g++
 CXXFLAGS := -std=c++20 -Wall -Wextra $(shell pkg-config --cflags libdrm)
 LDLIBS := $(shell pkg-config --libs libdrm)
 
-OBJECTS := build/main.o build/drm_device.o
-TARGET := build/libre-glass
+SOURCES := main.cpp src/drm_device.cpp src/drm_buffer.cpp
+BUILD_DIR ?= build
+OBJECTS := $(addprefix $(BUILD_DIR)/,$(SOURCES:.cpp=.o))
+TARGET := $(BUILD_DIR)/libre-glass
+TEST_TARGET := $(BUILD_DIR)/drm-lifecycle-test
+TEST_OBJECTS := $(BUILD_DIR)/tests/drm_lifecycle_test.o $(BUILD_DIR)/src/drm_device.o $(BUILD_DIR)/src/drm_buffer.o
+TEST_WRAPS := open close drmIsMaster drmSetMaster drmModeGetResources drmModeFreeResources \
+              drmModeGetConnectorCurrent drmModeGetConnector drmModeFreeConnector \
+              drmModeGetEncoder drmModeFreeEncoder drmModeGetCrtc drmModeFreeCrtc \
+              drmIoctl drmModeAddFB2 drmModeRmFB mmap munmap _Znwm
 
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
-	$(CXX) $(OBJECTS) $(LDLIBS) -o $@
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS) $(LDLIBS) -o $@
 
-build/%.o: %.cpp | build
+$(BUILD_DIR)/%.o: %.cpp
+	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
-build:
-	mkdir -p build
+$(TEST_TARGET): $(TEST_OBJECTS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(TEST_OBJECTS) $(foreach symbol,$(TEST_WRAPS),-Wl,--wrap=$(symbol)) $(LDLIBS) -o $@
 
--include $(OBJECTS:.o=.d)
+test: $(TEST_TARGET)
+	$(TEST_TARGET)
+
+-include $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d)
 
 clean:
-	rm -rf build
+	rm -rf $(BUILD_DIR)
 
-.PHONY: all clean
+.PHONY: all clean test

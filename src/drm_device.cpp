@@ -1,16 +1,20 @@
 #include "drm_device.hpp"
-#include "libdrm/drm_mode.h"
-
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
+#include <limits>
+#include <memory>
+#include <sys/mman.h>
 #include <utility>
 #include <vector>
 #include <unistd.h>
 #include <xf86drm.h>
+#include <drm.h>
+#include <drm_mode.h>
 
 using DRMTypes::ConnectorId;
 using DRMTypes::ConnectorPtr;
@@ -19,79 +23,121 @@ using DRMTypes::CrtcPtr;
 using DRMTypes::EncoderId;
 using DRMTypes::EncoderPtr;
 
-DrmDevice::~DrmDevice()
+namespace {
+void reportSystemError(const char* operation, int error) noexcept
+{
+    std::fprintf(stderr, "%s: %s\n", operation, std::strerror(error));
+}
+}
+
+DrmDevice::FileDescriptor::~FileDescriptor() noexcept
 {
     reset();
 }
 
-void DrmDevice::reset()
+void DrmDevice::FileDescriptor::reset(int value) noexcept
 {
-    if (resources_ != nullptr) {
-        drmModeFreeResources(resources_);
-        resources_ = nullptr;
+    const int previous = std::exchange(value_, value);
+    if (previous >= 0 && close(previous) != 0) {
+        // On Linux the descriptor must not be retried after close(), since
+        // its number may already have been reused, even when close fails.
+        reportSystemError("Could not close DRM device", errno);
+    }
+}
+
+DrmDevice::DrmDevice() noexcept
+    : bufferAccess_(*this),
+      buffers_{DrmBuffer(*this), DrmBuffer(*this)}
+{
+}
+
+DrmDevice::~DrmDevice() noexcept
+{
+    reset();
+}
+
+bool DrmDevice::reset() noexcept
+{
+    bool released = true;
+    for (auto& buffer : buffers_) {
+        if (!buffer.destroyBuffer()) {
+            released = false;
+        }
     }
 
-    if (fd_ >= 0) {
-        close(fd_);
-        fd_ = -1;
+    if (!released) {
+        // Keep the connection valid for unresolved releases and a retry.
+        return false;
     }
 
-    // Reset object state when initialize() fails and the object may be reused.
-    // The vector would free itself during destruction without this assignment.
+    resources_.reset();
     selectedDisplay_ = {};
     savedCrtc_ = {};
+    fd_.reset();
+    return true;
+}
+
+bool DrmDevice::shutdown() noexcept
+{
+    return reset();
 }
 
 bool DrmDevice::initialize(const char* path)
 {
-    if (fd_ >= 0) {
-        std::cerr << "DrmDevice is already initialized.\n";
+    if (fd_.get() >= 0) {
+        std::cerr << "DrmDevice is already open; shut it down before reinitializing.\n";
         return false;
     }
 
-    const bool initialized =
-        openDevice(path) &&
-        acquireMaster() &&
-        loadResources() &&
-        selectAndSaveDisplay();
+    try {
+        const bool initialized =
+            openDevice(path) &&
+            acquireMaster() &&
+            loadResources() &&
+            selectAndSaveDisplay() &&
+            createBuffers();
 
-    if (!initialized) {
+        if (!initialized) {
+            reset();
+        }
+
+        return initialized;
+    } catch (...) {
         reset();
+        throw;
     }
-
-    return initialized;
 }
 
 bool DrmDevice::openDevice(const char* path)
 {
-    fd_ = open(path, O_RDWR | O_CLOEXEC);
+    fd_.reset(open(path, O_RDWR | O_CLOEXEC));
 
-    if (fd_ < 0) {
+    if (fd_.get() < 0) {
         std::cerr << "Could not open " << path << ": "
                   << std::strerror(errno) << '\n';
         return false;
     }
 
     std::cout << "Opened " << path
-              << " under fd " << fd_ << '\n';
+              << " under fd " << fd_.get() << '\n';
 
     return true;
 }
 
 bool DrmDevice::acquireMaster()
 {
-    if (!drmIsMaster(fd_) && drmSetMaster(fd_) != 0) {
+    if (!drmIsMaster(fd_.get()) && drmSetMaster(fd_.get()) != 0) {
         std::cerr << "Could not become DRM master: "
                   << std::strerror(errno) << '\n';
         return false;
     }
 
-    return true;
+    return true; 
 }
 
 bool DrmDevice::loadResources()
 {
-    resources_ = drmModeGetResources(fd_);
+    resources_.reset(drmModeGetResources(fd_.get()));
 
     if (resources_ == nullptr) {
         std::cerr << "Could not get DRM resources: "
@@ -106,6 +152,11 @@ const DisplaySelection& DrmDevice::selectedDisplay() const
 {
     assert(selectedDisplay_.connectorId != 0);
     return selectedDisplay_;
+}
+
+const DrmDevice::BufferAccess& DrmDevice::bufferAccess() const noexcept
+{
+    return bufferAccess_;
 }
 
 drmModeModeInfo DrmDevice::chooseMode(const drmModeConnector& connector)
@@ -149,7 +200,7 @@ drmModeModeInfo DrmDevice::chooseMode(const drmModeConnector& connector)
 
 bool DrmDevice::saveCrtcState(CrtcId crtcId)
 {
-    CrtcPtr crtc(drmModeGetCrtc(fd_, crtcId), drmModeFreeCrtc);
+    CrtcPtr crtc(drmModeGetCrtc(fd_.get(), crtcId), drmModeFreeCrtc);
 
     if (!crtc) {
         std::cerr << "Could not inspect CRTC " << crtcId << ": "
@@ -185,7 +236,7 @@ bool DrmDevice::selectAndSaveDisplay()
         std::uint32_t encoderToCrtcMask{};  
     };
 
-    if (fd_ < 0 || resources_ == nullptr) {
+    if (fd_.get() < 0 || resources_ == nullptr) {
         std::cerr
             << "DRM device is not ready for display selection.\n";
         return false;
@@ -206,7 +257,7 @@ bool DrmDevice::selectAndSaveDisplay()
             resources_->connectors[i];
 
         connector.reset(
-            drmModeGetConnectorCurrent(fd_, connectorId)
+            drmModeGetConnectorCurrent(fd_.get(), connectorId)
         );
 
         if (!connector) {
@@ -232,7 +283,7 @@ bool DrmDevice::selectAndSaveDisplay()
 
         if (activeEncoderId != 0) {
             encoder.reset(
-                drmModeGetEncoder(fd_, activeEncoderId)
+                drmModeGetEncoder(fd_.get(), activeEncoderId)
             );
 
             if (!encoder) {
@@ -271,7 +322,7 @@ bool DrmDevice::selectAndSaveDisplay()
     // Second pass: inspect HDMI's full capabilities and pick a CRTC.
     for (const HdmiCandidate& candidate : hdmiCandidates) {
         connector.reset(
-            drmModeGetConnector(fd_, candidate.connectorId)
+            drmModeGetConnector(fd_.get(), candidate.connectorId)
         );
 
         if (!connector) {
@@ -302,7 +353,7 @@ bool DrmDevice::selectAndSaveDisplay()
                 // Alternative encoder choice
                 } else {
                     encoder.reset(
-                        drmModeGetEncoder(fd_, encoderId)
+                        drmModeGetEncoder(fd_.get(), encoderId)
                     );
 
                     if (!encoder) {
@@ -385,4 +436,87 @@ bool DrmDevice::selectAndSaveDisplay()
     std::cerr
         << "Could not find an HDMI connector with a usable CRTC.\n";
     return false;
+}
+
+bool DrmDevice::createBuffers()
+{
+    if (!buffers_[0].createBuffer())
+        return false;
+
+    if (!buffers_[1].createBuffer()) {
+        buffers_[0].destroyBuffer();
+        return false;
+    }
+
+    return true;
+}
+
+DrmDevice::BufferAccess::BufferAccess(const DrmDevice& device) noexcept
+    : device_(device)
+{
+}
+
+DrmDevice::BufferAccess::Dimensions DrmDevice::BufferAccess::dimensions() const noexcept
+{
+    return {device_.selectedDisplay_.mode.hdisplay, device_.selectedDisplay_.mode.vdisplay};
+}
+
+bool DrmDevice::BufferAccess::allocateDumbBuffer(
+    std::uint32_t width, std::uint32_t height, std::uint32_t bpp,
+    Allocation& allocation) const noexcept
+{
+    drm_mode_create_dumb request{};
+    request.width = width;
+    request.height = height;
+    request.bpp = bpp;
+    if (drmIoctl(device_.fd_.get(), DRM_IOCTL_MODE_CREATE_DUMB, &request) != 0) {
+        return false;
+    }
+    allocation = {request.handle, request.pitch, request.size};
+    return true;
+}
+
+bool DrmDevice::BufferAccess::registerFramebuffer(
+    std::uint32_t width, std::uint32_t height, std::uint32_t format,
+    std::uint32_t handle, std::uint32_t pitch, std::uint32_t& id) const noexcept
+{
+    const std::uint32_t handles[4] = {handle, 0, 0, 0};
+    const std::uint32_t pitches[4] = {pitch, 0, 0, 0};
+    const std::uint32_t offsets[4] = {};
+    return drmModeAddFB2(device_.fd_.get(), width, height, format,
+                         handles, pitches, offsets, &id, 0) == 0;
+}
+
+bool DrmDevice::BufferAccess::mappingOffset(
+    std::uint32_t handle, std::uint64_t& offset) const noexcept
+{
+    drm_mode_map_dumb request{};
+    request.handle = handle;
+    if (drmIoctl(device_.fd_.get(), DRM_IOCTL_MODE_MAP_DUMB, &request) != 0) {
+        return false;
+    }
+    offset = request.offset;
+    return true;
+}
+
+void* DrmDevice::BufferAccess::mapBuffer(std::size_t size, std::uint64_t offset) const noexcept
+{
+    if (offset > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max())) {
+        errno = EOVERFLOW;
+        return MAP_FAILED;
+    }
+    return mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                device_.fd_.get(), static_cast<off_t>(offset));
+}
+
+bool DrmDevice::BufferAccess::removeFramebuffer(std::uint32_t id) const noexcept
+{
+    return drmModeRmFB(device_.fd_.get(), id) == 0;
+}
+
+bool DrmDevice::BufferAccess::destroyDumbBuffer(std::uint32_t handle) const noexcept
+{
+    drm_mode_destroy_dumb request{};
+    request.handle = handle;
+    return drmIoctl(device_.fd_.get(), DRM_IOCTL_MODE_DESTROY_DUMB, &request) == 0;
 }
