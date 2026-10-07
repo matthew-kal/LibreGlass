@@ -55,6 +55,12 @@ bool DrmBuffer::createBuffer()
         return false;
     }
     buffer_.size = static_cast<std::size_t>(allocation.size);
+    if (std::uint64_t{buffer_.pitch} < std::uint64_t{dimensions.width} * 4 ||
+        allocation.size < std::uint64_t{buffer_.pitch} * dimensions.height) {
+        reportSystemError("Dumb buffer layout is too small", EINVAL);
+        destroyBuffer();
+        return false;
+    }
 
     if (!access.registerFramebuffer(dimensions.width, dimensions.height,
                                      DRM_FORMAT_XRGB8888, buffer_.handle,
@@ -87,6 +93,12 @@ bool DrmBuffer::createBuffer()
 
 bool DrmBuffer::destroyBuffer() noexcept
 {
+    const auto& access = device_.bufferAccess();
+    if (buffer_.hasResources() && !access.canReleaseBuffer()) {
+        reportSystemError("Cannot release a buffer while the display is active", EBUSY);
+        return false;
+    }
+
     bool released = true;
     if (buffer_.mapped) {
         if (munmap(buffer_.pixels, buffer_.size) == 0) {
@@ -98,7 +110,6 @@ bool DrmBuffer::destroyBuffer() noexcept
         }
     }
 
-    const auto& access = device_.bufferAccess();
     if (buffer_.framebufferId != 0) {
         if (access.removeFramebuffer(buffer_.framebufferId)) {
             buffer_.framebufferId = 0;

@@ -76,3 +76,8 @@ bool DrmDevice::BufferAccess::destroyDumbBuffer(std::uint32_t handle) const noex
     request.handle = handle;
     return drmIoctl(device_.fd_.get(), DRM_IOCTL_MODE_DESTROY_DUMB, &request) == 0;
 }
+
+bool DrmDevice::BufferAccess::canReleaseBuffer() const noexcept
+{
+    return !device_.displayActive_;
+}

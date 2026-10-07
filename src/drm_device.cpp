@@ -49,11 +49,19 @@ DrmDevice::DrmDevice() noexcept
 
 DrmDevice::~DrmDevice() noexcept
 {
-    reset();
+    if (!reset()) {
+        reset();
+    }
 }
 
 bool DrmDevice::reset() noexcept
 {
+    initialized_ = false;
+    frameAcquired_ = false;
+    if (!restoreDisplay()) {
+        return false;
+    }
+
     bool released = true;
     for (auto& buffer : buffers_) {
         if (!buffer.destroyBuffer()) {
@@ -97,6 +105,7 @@ bool DrmDevice::initialize(const char* path)
             reset();
         }
 
+        initialized_ = initialized;
         return initialized;
     } catch (...) {
         reset();
@@ -153,6 +162,74 @@ const DisplaySelection& DrmDevice::selectedDisplay() const
 const DrmDevice::BufferAccess& DrmDevice::bufferAccess() const noexcept
 {
     return bufferAccess_;
+}
+
+std::optional<FrameView> DrmDevice::acquireFrame() noexcept
+{
+    if (!initialized_ || frameAcquired_ || displayActive_) {
+        return std::nullopt;
+    }
+
+    const auto& buffer = buffers_[0].buffer_;
+    FrameView frame{
+        buffer.pixels, selectedDisplay_.mode.hdisplay,
+        selectedDisplay_.mode.vdisplay, buffer.pitch, buffer.size, 0
+    };
+    if (!buffer.mapped || !frame.valid()) {
+        return std::nullopt;
+    }
+
+    frameAcquired_ = true;
+    return frame;
+}
+
+bool DrmDevice::present(const FrameView& frame) noexcept
+{
+    const auto& buffer = buffers_[0].buffer_;
+    if (!initialized_ || !frameAcquired_ || displayActive_ ||
+        frame.bufferIndex != 0 || frame.pixels != buffer.pixels ||
+        frame.width != selectedDisplay_.mode.hdisplay ||
+        frame.height != selectedDisplay_.mode.vdisplay ||
+        frame.pitch != buffer.pitch || frame.size != buffer.size ||
+        !buffer.mapped || !frame.valid()) {
+        std::fprintf(stderr, "Cannot present a frame that is not acquired.\n");
+        return false;
+    }
+
+    auto connector = selectedDisplay_.connectorId;
+    auto mode = selectedDisplay_.mode;
+    if (drmModeSetCrtc(fd_.get(), selectedDisplay_.crtcId,
+                       buffer.framebufferId, 0, 0, &connector, 1, &mode) != 0) {
+        reportSystemError("Could not present framebuffer", errno);
+        return false;
+    }
+
+    displayActive_ = true;
+    frameAcquired_ = false;
+    return true;
+}
+
+bool DrmDevice::restoreDisplay() noexcept
+{
+    if (!displayActive_) {
+        return true;
+    }
+
+    auto mode = savedCrtc_.mode;
+    const bool enabled = savedCrtc_.modeValid;
+    if (drmModeSetCrtc(fd_.get(), savedCrtc_.crtcId,
+                       enabled ? savedCrtc_.framebufferId : 0,
+                       enabled ? savedCrtc_.x : 0,
+                       enabled ? savedCrtc_.y : 0,
+                       enabled ? savedCrtc_.connectorIds.data() : nullptr,
+                       enabled ? static_cast<int>(savedCrtc_.connectorIds.size()) : 0,
+                       enabled ? &mode : nullptr) != 0) {
+        reportSystemError("Could not restore display", errno);
+        return false;
+    }
+
+    displayActive_ = false;
+    return true;
 }
 
 drmModeModeInfo DrmDevice::chooseMode(const drmModeConnector& connector)
@@ -329,6 +406,10 @@ bool DrmDevice::selectAndSaveDisplay()
         }
 
         const drmModeConnector& hdmi = *connector;  
+        if (hdmi.connection != DRM_MODE_CONNECTED) {
+            continue;
+        }
+
         CrtcId chosenCrtcId = candidate.activeCrtcId;
 
         // If the connector's encoder's CTRC is not assigned...

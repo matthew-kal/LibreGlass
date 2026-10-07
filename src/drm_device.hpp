@@ -1,6 +1,7 @@
 #pragma once
 
 #include "drm_buffer.hpp"
+#include "frame_view.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <xf86drmMode.h>
 #include <memory>
 #include <array> 
+#include <optional>
 
 namespace DRMTypes{
 
@@ -76,6 +78,7 @@ public:
         void* mapBuffer(std::size_t size, std::uint64_t offset) const noexcept;
         bool removeFramebuffer(std::uint32_t id) const noexcept;
         bool destroyDumbBuffer(std::uint32_t handle) const noexcept;
+        bool canReleaseBuffer() const noexcept;
 
         explicit BufferAccess(const DrmDevice& device) noexcept;
         const DrmDevice& device_;
@@ -96,6 +99,8 @@ public:
     bool shutdown() noexcept;
     const DisplaySelection& selectedDisplay() const;
     const BufferAccess& bufferAccess() const noexcept;
+    std::optional<FrameView> acquireFrame() noexcept;
+    bool present(const FrameView& frame) noexcept;
 
 private:
     class FileDescriptor {
@@ -131,6 +136,7 @@ private:
     bool selectAndSaveDisplay();
     bool saveCrtcState(CrtcId crtcId);
     bool reset() noexcept;
+    bool restoreDisplay() noexcept;
     static drmModeModeInfo chooseMode(const drmModeConnector& connector);
     bool createBuffers(); 
 
@@ -142,6 +148,9 @@ private:
     };
     DisplaySelection selectedDisplay_{};
     SavedCrtcState savedCrtc_{};
+    bool initialized_{};
+    bool frameAcquired_{};
+    bool displayActive_{};
     BufferAccess bufferAccess_;
     std::array<DrmBuffer, 2> buffers_;
 };
