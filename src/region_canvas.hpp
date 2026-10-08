@@ -2,11 +2,6 @@
 
 #include "frame_view.hpp"
 
-enum class DisplayRotation {
-    None,
-    Clockwise90
-};
-
 struct Rectangle {
     std::uint32_t x;
     std::uint32_t y;
@@ -28,9 +23,8 @@ public:
 private:
     friend class Renderer;
 
-    RegionCanvas(FrameView frame, Rectangle bounds, DisplayRotation rotation) noexcept;
+    RegionCanvas(FrameView frame, Rectangle bounds) noexcept;
 
     FrameView frame_;
     Rectangle bounds_;
-    DisplayRotation rotation_;
 };

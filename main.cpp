@@ -1,10 +1,13 @@
 #include "src/drm_device.hpp"
+#include "src/panels/ssh_panel.hpp"
+#include "src/panels/weather_panel.hpp"
 #include "src/renderer.hpp"
 
 #include <cerrno>
 #include <csignal>
 #include <cstring>
 #include <iostream>
+#include <memory>
 
 int main(int argc, char** argv)
 {
@@ -13,7 +16,11 @@ int main(int argc, char** argv)
         return argc > 2 ? 1 : 0;
     }
 
-    sigset_t signals{};
+    // Create an empty set of signals the process blocks
+    // Block SIGINT ( user termination)
+    // Block SIGTERM (typically programatic termination)
+    // Attempt to register the set with the kernel
+    sigset_t signals;
     sigemptyset(&signals);
     sigaddset(&signals, SIGINT);
     sigaddset(&signals, SIGTERM);
@@ -24,32 +31,35 @@ int main(int argc, char** argv)
     }
 
     DrmDevice device{};
-    Renderer renderer{};
+    Renderer renderer{
+        std::make_unique<SshPanel>(),
+        std::make_unique<WeatherPanel>()
+    };
 
     if (!device.initialize(argc == 2 ? argv[1] : "/dev/dri/card1")) {
         return 1;
     }
 
-    const auto& display = device.selectedDisplay();
-    std::cout << "Selected connector " << display.connectorId
-              << ", CRTC " << display.crtcId
-              << ", mode " << display.mode.hdisplay << 'x'
-              << display.mode.vdisplay << " (" << display.mode.name << ").\n";
-
-    renderer.update(Panel::Clock::now());
+    const auto now = Panel::Clock::now();
+    renderer.update<SshPanel::index>(now);
+    renderer.update<WeatherPanel::index>(now);
     const auto frame = device.acquireFrame();
-    if (!frame || !renderer.paint(*frame, DisplayRotation::Clockwise90) ||
+    if (!frame || !renderer.paint(*frame) ||
         !device.present(*frame)) {
         std::cerr << "Could not paint the initial screen.\n";
         return 1;
     }
 
-    std::cout << "Displaying an empty portrait layout with nine panel slots. "
+    std::cout << "Displaying a portrait layout with SSH and weather panel slots. "
               << "Press Ctrl+C to restore the display.\n"
               << std::flush;
 
-    int signal{};
-    const int waitError = sigwait(&signals, &signal);
+
+    // Attempts to block the main thread of execution
+    // Current placeholder for event loop
+    int sigwaitRet{};
+    const int waitError = sigwait(&signals, &sigwaitRet);
+
     if (waitError != 0) {
         std::cerr << "Could not wait for termination: "
                   << std::strerror(waitError) << '\n';

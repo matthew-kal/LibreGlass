@@ -4,9 +4,8 @@
 #include <array>
 #include <cstring>
 
-RegionCanvas::RegionCanvas(FrameView frame, Rectangle bounds,
-                           DisplayRotation rotation) noexcept
-    : frame_(frame), bounds_(bounds), rotation_(rotation)
+RegionCanvas::RegionCanvas(FrameView frame, Rectangle bounds) noexcept
+    : frame_(frame), bounds_(bounds)
 {
 }
 
@@ -26,10 +25,9 @@ void RegionCanvas::fillRectangle(Rectangle rectangle, std::uint32_t color) noexc
     rectangle.x += bounds_.x;
     rectangle.y += bounds_.y;
 
-    if (rotation_ == DisplayRotation::Clockwise90) {
-        rectangle = {rectangle.y, frame_.height - rectangle.x - rectangle.width,
-                     rectangle.height, rectangle.width};
-    }
+    // Map portrait coordinates into the framebuffer with the fixed 90-degree transform.
+    rectangle = {rectangle.y, frame_.height - rectangle.x - rectangle.width,
+                 rectangle.height, rectangle.width};
 
     const std::array<std::uint8_t, 4> pixel{
         static_cast<std::uint8_t>(color),

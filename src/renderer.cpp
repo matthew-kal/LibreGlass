@@ -1,42 +1,19 @@
 #include "renderer.hpp"
 
 #include <algorithm>
-#include <utility>
 
-bool Renderer::setPanel(std::size_t index, std::unique_ptr<Panel> panel) noexcept
+bool Renderer::paint(FrameView frame) const noexcept
 {
-    if (index >= panels_.size()) {
-        return false;
-    }
-
-    panels_[index] = std::move(panel);
-    return true;
-}
-
-void Renderer::update(Panel::Clock::time_point now) noexcept
-{
-    for (auto& panel : panels_) {
-        if (panel) {
-            panel->update(now);
-        }
-    }
-}
-
-bool Renderer::paint(FrameView frame, DisplayRotation rotation) const noexcept
-{
-    if (!frame.valid() || (rotation != DisplayRotation::None &&
-                           rotation != DisplayRotation::Clockwise90)) {
+    if (!frame.valid()) {
         return false;
     }
 
     constexpr std::uint32_t columns = 3;
     constexpr std::uint32_t rows = 3;
-    const auto logicalWidth = rotation == DisplayRotation::Clockwise90
-        ? frame.height : frame.width;
-    const auto logicalHeight = rotation == DisplayRotation::Clockwise90
-        ? frame.width : frame.height;
+    const auto logicalWidth = frame.height;
+    const auto logicalHeight = frame.width;
 
-    RegionCanvas background{frame, {0, 0, logicalWidth, logicalHeight}, rotation};
+    RegionCanvas background{frame, {0, 0, logicalWidth, logicalHeight}};
     background.clear(0);
 
     const auto gap = std::min(logicalWidth, logicalHeight) / 32;
@@ -58,7 +35,7 @@ bool Renderer::paint(FrameView frame, DisplayRotation rotation) const noexcept
                 continue;
             }
 
-            RegionCanvas canvas{frame, {x, y, width, height}, rotation};
+            RegionCanvas canvas{frame, {x, y, width, height}};
             panel->paint(canvas);
         }
     }

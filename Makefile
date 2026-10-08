@@ -2,7 +2,7 @@ CXX := g++
 CXXFLAGS := -std=c++20 -O2 -Wall -Wextra $(shell pkg-config --cflags libdrm)
 LDLIBS := $(shell pkg-config --libs libdrm)
 
-SOURCES := main.cpp src/drm_device.cpp src/drm_buffer.cpp src/buffer_access.cpp src/renderer.cpp src/region_canvas.cpp
+SOURCES := main.cpp src/drm_device.cpp src/drm_buffer.cpp src/buffer_access.cpp src/renderer.cpp src/region_canvas.cpp src/panels/ssh_panel.cpp src/panels/weather_panel.cpp
 BUILD_DIR ?= build
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(SOURCES:.cpp=.o))
 TARGET := $(BUILD_DIR)/libre-glass

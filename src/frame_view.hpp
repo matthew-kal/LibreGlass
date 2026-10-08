@@ -4,11 +4,15 @@
 #include <cstdint>
 
 struct FrameView {
-    std::uint8_t* pixels{};
-    std::uint32_t width{};
+
+// Non-owning view of a buffer (DrmBuffer)
+// The owned portion of the buffer is unspecified. 
+    
+    std::uint8_t* pixels{}; 
+    std::uint32_t width{}; 
     std::uint32_t height{};
     std::uint32_t pitch{};
-    std::size_t size{};
+    std::size_t size{}; 
     std::size_t bufferIndex{};
 
     bool valid() const noexcept
