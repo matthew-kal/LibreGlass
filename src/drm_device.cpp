@@ -77,6 +77,8 @@ bool DrmDevice::reset() noexcept
     resources_.reset();
     selectedDisplay_ = {};
     savedCrtc_ = {};
+    front_ = acquired_ = 0;
+    flipPending_ = false;
     fd_.reset();
     return true;
 }
@@ -113,6 +115,9 @@ bool DrmDevice::initialize(const char* path)
     }
 }
 
+
+// Open a fd to the graphics device with read and write 
+// Ensure that the kernel closes the fd on execve() 
 bool DrmDevice::openDevice(const char* path)
 {
     fd_.reset(open(path, O_RDWR | O_CLOEXEC));
@@ -129,6 +134,9 @@ bool DrmDevice::openDevice(const char* path)
     return true;
 }
 
+
+// Request DRM master status for this device fd, allowing display-changing KMS operations.
+// This lets us configure buffer --> plane --> CRTC --> encoder --> connector --> display 
 bool DrmDevice::acquireMaster()
 {
     if (!drmIsMaster(fd_.get()) && drmSetMaster(fd_.get()) != 0) {
@@ -153,28 +161,35 @@ bool DrmDevice::loadResources()
     return true;
 }
 
+//QA
 const DisplaySelection& DrmDevice::selectedDisplay() const
 {
     assert(selectedDisplay_.connectorId != 0);
     return selectedDisplay_;
 }
 
+// Returns a borrowable reference to DrmDevice's 
+// BufferAccess member (nested class) 
 const DrmDevice::BufferAccess& DrmDevice::bufferAccess() const noexcept
 {
     return bufferAccess_;
 }
 
+
 std::optional<FrameView> DrmDevice::acquireFrame() noexcept
 {
-    if (!initialized_ || frameAcquired_ || displayActive_) {
+    if (!initialized_ || frameAcquired_ || flipPending_) {
         return std::nullopt;
     }
 
-    const auto& buffer = buffers_[0].buffer_;
+    acquired_ = displayActive_ ? 1 - front_ : 0;
+    const auto& buffer = buffers_[acquired_].buffer_;
+    
     FrameView frame{
         buffer.pixels, selectedDisplay_.mode.hdisplay,
-        selectedDisplay_.mode.vdisplay, buffer.pitch, buffer.size, 0
+        selectedDisplay_.mode.vdisplay, buffer.pitch, buffer.size, acquired_
     };
+
     if (!buffer.mapped || !frame.valid()) {
         return std::nullopt;
     }
@@ -185,9 +200,9 @@ std::optional<FrameView> DrmDevice::acquireFrame() noexcept
 
 bool DrmDevice::present(const FrameView& frame) noexcept
 {
-    const auto& buffer = buffers_[0].buffer_;
-    if (!initialized_ || !frameAcquired_ || displayActive_ ||
-        frame.bufferIndex != 0 || frame.pixels != buffer.pixels ||
+    const auto& buffer = buffers_[acquired_].buffer_;
+    if (!initialized_ || !frameAcquired_ || flipPending_ ||
+        frame.bufferIndex != acquired_ || frame.pixels != buffer.pixels ||
         frame.width != selectedDisplay_.mode.hdisplay ||
         frame.height != selectedDisplay_.mode.vdisplay ||
         frame.pitch != buffer.pitch || frame.size != buffer.size ||
@@ -196,6 +211,17 @@ bool DrmDevice::present(const FrameView& frame) noexcept
         return false;
     }
 
+    if (displayActive_) {
+        if (drmModePageFlip(fd_.get(), selectedDisplay_.crtcId, buffer.framebufferId,
+                            DRM_MODE_PAGE_FLIP_EVENT, this) != 0) {
+            reportSystemError("Could not queue page flip", errno);
+            return false;
+        }
+        flipPending_ = true;
+        frameAcquired_ = false;
+        return true;
+    }
+    front_ = acquired_;
     auto connector = selectedDisplay_.connectorId;
     auto mode = selectedDisplay_.mode;
     if (drmModeSetCrtc(fd_.get(), selectedDisplay_.crtcId,
@@ -207,6 +233,29 @@ bool DrmDevice::present(const FrameView& frame) noexcept
     displayActive_ = true;
     frameAcquired_ = false;
     return true;
+}
+
+// Callback function for page flips 
+void DrmDevice::flipped(int, unsigned, unsigned, unsigned, void* data) noexcept
+{
+    auto& device = *static_cast<DrmDevice*>(data);
+    device.front_ = device.acquired_;
+    device.flipPending_ = false;
+}
+
+bool DrmDevice::processEvents() noexcept
+{
+    drmEventContext context{};
+    context.version = 2;
+    context.page_flip_handler = flipped;
+    return drmHandleEvent(fd_.get(), &context) == 0;
+}
+
+bool DrmDevice::connected() const noexcept
+{
+    ConnectorPtr connector(drmModeGetConnector(fd_.get(), selectedDisplay_.connectorId),
+                           drmModeFreeConnector);
+    return connector && connector->connection == DRM_MODE_CONNECTED;
 }
 
 bool DrmDevice::restoreDisplay() noexcept
@@ -229,6 +278,7 @@ bool DrmDevice::restoreDisplay() noexcept
     }
 
     displayActive_ = false;
+    flipPending_ = false;
     return true;
 }
 
@@ -526,4 +576,22 @@ bool DrmDevice::createBuffers()
     }
 
     return true;
+}
+
+std::array<DrmDevice::BufferInfo, 2> DrmDevice::bufferInfo() const noexcept
+{
+    std::array<BufferInfo, 2> result{};
+    for (std::size_t i=0;i<buffers_.size();++i) {
+        const auto& buffer=buffers_[i].buffer_;
+        auto& info=result[i];
+        info.address=reinterpret_cast<std::uintptr_t>(buffer.pixels);
+        info.bytes=buffer.size;
+        info.pitch=buffer.pitch;
+        if (!buffer.mapped) continue;
+        info.role=BufferRole::Available;
+        if (displayActive_ && i==front_) info.role=BufferRole::Front;
+        if (frameAcquired_ && i==acquired_) info.role=BufferRole::Drawing;
+        if (flipPending_ && i==acquired_) info.role=BufferRole::Pending;
+    }
+    return result;
 }

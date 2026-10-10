@@ -18,6 +18,10 @@ public:
     std::uint32_t height() const noexcept { return bounds_.height; }
 
     void clear(std::uint32_t color) noexcept;
+    // Fixed five-by-seven glyphs; lowercase is displayed as uppercase.
+    void text(int x, int y, const char* value, std::uint32_t color,
+              unsigned scale = 1) noexcept;
+    void pixel(int x, int y, std::uint32_t color) noexcept;
     void fillRectangle(Rectangle rectangle, std::uint32_t color) noexcept;
 
 private:

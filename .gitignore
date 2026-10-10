@@ -1,6 +1,9 @@
 /build
-/tmp
-/.agents 
-/.codex
+
 /docs
 /tests
+/tmp
+
+AGENTS.md
+/.agents 
+/.codex

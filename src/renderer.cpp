@@ -1,44 +1,61 @@
 #include "renderer.hpp"
-
 #include <algorithm>
+#include <new>
 
+namespace {
+// Physical 1920x1080, logical 1080x1920. Fixed 3x3 layout.
+constexpr Rectangle slot(std::size_t index) {
+    return {33 + static_cast<std::uint32_t>(index % 3) * 349,
+            33 + static_cast<std::uint32_t>(index / 3) * 629, 316, 596};
+}
+}
+
+//QA
 bool Renderer::paint(FrameView frame) const noexcept
 {
-    if (!frame.valid()) {
-        return false;
-    }
-
-    constexpr std::uint32_t columns = 3;
-    constexpr std::uint32_t rows = 3;
-    const auto logicalWidth = frame.height;
-    const auto logicalHeight = frame.width;
-
-    RegionCanvas background{frame, {0, 0, logicalWidth, logicalHeight}};
+    if (!frame.valid() || frame.width != 1920 || frame.height != 1080) return false;
+    RegionCanvas background{frame, {0, 0, 1080, 1920}};
     background.clear(0);
-
-    const auto gap = std::min(logicalWidth, logicalHeight) / 32;
-    const auto panelWidth = (logicalWidth - gap * (columns + 1)) / columns;
-    const auto panelHeight = (logicalHeight - gap * (rows + 1)) / rows;
-
-    for (std::uint32_t row = 0; row < rows; ++row) {
-        for (std::uint32_t column = 0; column < columns; ++column) {
-            const auto& panel = panels_[row * columns + column];
-            if (!panel) {
-                continue;
-            }
-
-            const auto x = gap + column * (panelWidth + gap);
-            const auto y = gap + row * (panelHeight + gap);
-            const auto width = column == columns - 1 ? logicalWidth - gap - x : panelWidth;
-            const auto height = row == rows - 1 ? logicalHeight - gap - y : panelHeight;
-            if (width == 0 || height == 0) {
-                continue;
-            }
-
-            RegionCanvas canvas{frame, {x, y, width, height}};
-            panel->paint(canvas);
+    for (std::size_t i = 0; i < PanelCount; ++i) {
+        if (panels_[i]) {
+            RegionCanvas canvas{frame, slot(i)};
+            panels_[i]->paint(canvas);
         }
     }
-
     return true;
+}
+
+bool Renderer::render(FrameView frame) noexcept
+{
+    if (!frame.valid() || frame.width != 1920 || frame.height != 1080 ||
+        frame.bufferIndex >= painted_.size()) return false;
+    const auto b = frame.bufferIndex;
+    if (!initialized_[b]) {
+        RegionCanvas background{frame, {0, 0, 1080, 1920}};
+        background.clear(0);
+        initialized_[b] = true;
+    }
+    for (std::size_t i = 0; i < PanelCount; ++i) {
+        if (painted_[b][i] == revisions_[i]) continue;
+        RegionCanvas canvas{frame, slot(i)};
+        canvas.clear(0);
+        if (panels_[i]) panels_[i]->paint(canvas);
+        painted_[b][i] = revisions_[i];
+    }
+    return true;
+}
+
+// Dispatches update call to panels to update internal state if needed
+void Renderer::updateDue(Panel::Clock::time_point now) noexcept
+{
+    for (std::size_t i = 0; i < PanelCount; ++i)
+        if (panels_[i] && panels_[i]->nextUpdate() <= now && panels_[i]->update(now))
+            ++revisions_[i];
+}
+
+Panel::Clock::time_point Renderer::nextUpdate() const noexcept
+{
+    auto next = Panel::Clock::time_point::max();
+    for (const auto& panel : panels_) if (panel) next = std::min(next, panel->nextUpdate());
+    return next;
 }

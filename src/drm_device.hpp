@@ -42,8 +42,10 @@ struct DisplaySelection {
 
 class DrmDevice {
 public:
-    // Read-only buffer requirements and restricted descriptor-dependent
-    // operations. Allocation state and lifecycle policy belong to DrmBuffer.
+
+    // DrmBuffer's isolated view into DrmDevice.
+    // DrmDevice owns DrmBuffer's RAII, but DrmBuffer 
+    // needs DrmDevice's KMS functions to init.
     class BufferAccess {
     public:
     
@@ -94,15 +96,35 @@ public:
     DrmDevice& operator=(DrmDevice&&) = delete;
 
     bool initialize(const char* path);
-    // Failed releases retain their ownership records and connection so the
-    // caller can retry. Destruction makes a final best-effort cleanup attempt.
     bool shutdown() noexcept;
+
+    // QA
     const DisplaySelection& selectedDisplay() const;
+    
     const BufferAccess& bufferAccess() const noexcept;
+
     std::optional<FrameView> acquireFrame() noexcept;
     bool present(const FrameView& frame) noexcept;
+    int eventFd() const noexcept { return fd_.get(); }
+    bool processEvents() noexcept;
+    bool connected() const noexcept;
+
+    // QA - Completion status of acquired Buffer (defined below)
+    bool flipPending() const noexcept { return flipPending_; }
+
+    enum class BufferRole { Unmapped, Available, Front, Pending, Drawing };
+
+    struct BufferInfo {
+        std::uintptr_t address{};
+        std::size_t bytes{};
+        std::uint32_t pitch{};
+        BufferRole role = BufferRole::Unmapped;
+    };
+   
+    std::array<BufferInfo, 2> bufferInfo() const noexcept;
 
 private:
+
     class FileDescriptor {
     public:
         FileDescriptor() = default;
@@ -140,17 +162,27 @@ private:
     static drmModeModeInfo chooseMode(const drmModeConnector& connector);
     bool createBuffers(); 
 
-    // Dependencies are declared before their borrowers: buffers destruct
-    // before the access interface, resource snapshot, and descriptor owner.
     FileDescriptor fd_{};
+
     std::unique_ptr<drmModeRes, decltype(&drmModeFreeResources)> resources_{
         nullptr, drmModeFreeResources
     };
+    
     DisplaySelection selectedDisplay_{};
     SavedCrtcState savedCrtc_{};
     bool initialized_{};
     bool frameAcquired_{};
     bool displayActive_{};
+
+    // Status of acquired Buffer
+    // Index of buffer being displayed 
+    // Index of buffer in queue (drawing or waiting)
+    bool flipPending_{};
+    std::size_t front_{};
+    std::size_t acquired_{};
+
+    static void flipped(int, unsigned, unsigned, unsigned, void*) noexcept;
+
     BufferAccess bufferAccess_;
     std::array<DrmBuffer, 2> buffers_;
 };

@@ -1,7 +1,8 @@
 #include "weather_panel.hpp"
 
-void WeatherPanel::update(Clock::time_point) noexcept
+bool WeatherPanel::update(Clock::time_point) noexcept
 {
+    return false;
 }
 
 void WeatherPanel::paint(RegionCanvas&) const noexcept

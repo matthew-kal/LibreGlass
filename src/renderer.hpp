@@ -1,6 +1,6 @@
 #pragma once
 
-#include "panel.hpp"
+#include "panels/panel.hpp"
 #include "region_canvas.hpp"
 
 #include <array>
@@ -27,6 +27,7 @@ public:
         ((panels_[PanelTypes::index] = std::move(panels)), ...);
     }
 
+    //QA
     template <std::size_t Index>
     bool update(Panel::Clock::time_point now) noexcept
     {
@@ -38,12 +39,21 @@ public:
             return false;
         }
 
-        panel->update(now);
-        return true;
+        const bool changed = panel->update(now);
+        if (changed) ++revisions_[Index];
+        return changed;
     }
 
-    // Paint the fixed 90-degree portrait layout.
     bool paint(FrameView frame) const noexcept;
+    bool render(FrameView frame) noexcept;
+
+    // Buffer status flags vs Panel internal status flags
+    // Update current Buffer status flags
+    bool pending() const noexcept { return submitted_ != revisions_; }
+    void submitted() noexcept { submitted_ = revisions_; }
+    
+    void updateDue(Panel::Clock::time_point now) noexcept;
+    Panel::Clock::time_point nextUpdate() const noexcept;
 
 private:
 
@@ -69,4 +79,8 @@ private:
     }
 
     std::array<std::unique_ptr<Panel>, PanelCount> panels_{};
+    std::array<std::uint64_t, PanelCount> revisions_{1,1,1,1,1,1,1,1,1};
+    std::array<std::uint64_t, PanelCount> submitted_{};
+    std::array<std::array<std::uint64_t, PanelCount>, 2> painted_{};
+    std::array<bool, 2> initialized_{};
 };
