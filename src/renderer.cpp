@@ -25,6 +25,7 @@ bool Renderer::paint(FrameView frame) const noexcept
     return true;
 }
 
+// Dispatch painting for panel regions outdated in the acquired buffer
 bool Renderer::render(FrameView frame) noexcept
 {
     if (!frame.valid() || frame.width != 1920 || frame.height != 1080 ||

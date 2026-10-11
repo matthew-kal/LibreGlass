@@ -1,5 +1,5 @@
 #pragma once
-#include "../../panel.hpp"
+#include "../panel.hpp"
 #include <cstdint>
 
 struct MemoryRegion {

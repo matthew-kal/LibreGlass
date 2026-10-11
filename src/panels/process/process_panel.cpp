@@ -1,6 +1,6 @@
 #include "process_panel.hpp"
 #include "../../region_canvas.hpp"
-#include "../../stack_depth.hpp"
+#include "../stack_depth.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>

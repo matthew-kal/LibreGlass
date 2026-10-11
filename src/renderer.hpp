@@ -15,8 +15,8 @@ public:
     // 3x3 grid of panels on the mirror
     static constexpr std::size_t PanelCount = 9;
 
-    // Supply a pack of panels to be evaluated at compile time
-    // Hand ownership to the Renderer if succesful, otherwise throw
+    // Check supplied panel types and slot indices at compile time
+    // Transfer ownership to the Renderer when those checks succeed
     template <typename... PanelTypes>
         requires (std::derived_from<PanelTypes, Panel> && ...)
     explicit Renderer(std::unique_ptr<PanelTypes>... panels) noexcept
@@ -47,11 +47,12 @@ public:
     bool paint(FrameView frame) const noexcept;
     bool render(FrameView frame) noexcept;
 
-    // Buffer status flags vs Panel internal status flags
-    // Update current Buffer status flags
+    // Returns: current panel revisions differ from last submitted revisions
     bool pending() const noexcept { return submitted_ != revisions_; }
+
+    // Record current panel revisions as submitted
     void submitted() noexcept { submitted_ = revisions_; }
-    
+
     void updateDue(Panel::Clock::time_point now) noexcept;
     Panel::Clock::time_point nextUpdate() const noexcept;
 

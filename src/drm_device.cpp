@@ -182,9 +182,10 @@ std::optional<FrameView> DrmDevice::acquireFrame() noexcept
         return std::nullopt;
     }
 
+    
     acquired_ = displayActive_ ? 1 - front_ : 0;
     const auto& buffer = buffers_[acquired_].buffer_;
-    
+
     FrameView frame{
         buffer.pixels, selectedDisplay_.mode.hdisplay,
         selectedDisplay_.mode.vdisplay, buffer.pitch, buffer.size, acquired_
@@ -198,6 +199,7 @@ std::optional<FrameView> DrmDevice::acquireFrame() noexcept
     return frame;
 }
 
+// Present rendered frame or queue page flip
 bool DrmDevice::present(const FrameView& frame) noexcept
 {
     const auto& buffer = buffers_[acquired_].buffer_;
@@ -211,6 +213,7 @@ bool DrmDevice::present(const FrameView& frame) noexcept
         return false;
     }
 
+    // Queue a CRTC framebuffer switch and request an event when the flip completes.
     if (displayActive_) {
         if (drmModePageFlip(fd_.get(), selectedDisplay_.crtcId, buffer.framebufferId,
                             DRM_MODE_PAGE_FLIP_EVENT, this) != 0) {
@@ -224,6 +227,8 @@ bool DrmDevice::present(const FrameView& frame) noexcept
     front_ = acquired_;
     auto connector = selectedDisplay_.connectorId;
     auto mode = selectedDisplay_.mode;
+
+    // Configure initial CRTC scanout, connector routing, and display mode.
     if (drmModeSetCrtc(fd_.get(), selectedDisplay_.crtcId,
                        buffer.framebufferId, 0, 0, &connector, 1, &mode) != 0) {
         reportSystemError("Could not present framebuffer", errno);

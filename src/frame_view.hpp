@@ -3,10 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 
-struct FrameView {
-
 // Non-owning view of a buffer (DrmBuffer)
 // The owned portion of the buffer is unspecified. 
+
+struct FrameView {
     
     std::uint8_t* pixels{}; 
     std::uint32_t width{}; 

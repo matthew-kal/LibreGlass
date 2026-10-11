@@ -174,11 +174,14 @@ private:
     bool frameAcquired_{};
     bool displayActive_{};
 
-    // Status of acquired Buffer
-    // Index of buffer being displayed 
-    // Index of buffer in queue (drawing or waiting)
+    /// Status of submitted display flip
+    /// True while a submitted display flip is awaiting completion.
     bool flipPending_{};
+
+    /// Index of buffer being displayed
     std::size_t front_{};
+
+    /// Index of the most recently acquired drawing buffer
     std::size_t acquired_{};
 
     static void flipped(int, unsigned, unsigned, unsigned, void*) noexcept;

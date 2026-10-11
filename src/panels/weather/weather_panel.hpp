@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../panel.hpp"
+#include "../panel.hpp"
 
 #include <cstddef>
 

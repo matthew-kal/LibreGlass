@@ -1,5 +1,5 @@
 #include "kernel_stats.hpp"
-#include "../../stack_depth.hpp"
+#include "../stack_depth.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>

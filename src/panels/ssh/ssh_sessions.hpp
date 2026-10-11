@@ -16,13 +16,12 @@ public:
     SshSessions& operator=(const SshSessions&) = delete;
     bool initialize();
 
-    // Wrappers are marked noexcept because failure cases are 
-    // denoted with noexcept because C functions cannot 
-    // emit C++ exceptions 
+    // Wrappers report failures through return values,
+    // including empty optionals; noexcept promises that
+    // no C++ exceptions escape these functions.
 
     int fd() const noexcept;
     int events() const noexcept;
-    std::uint64_t timeout() const noexcept;
     std::optional<unsigned> refresh() noexcept;
 private:
     sd_login_monitor* monitor_{};

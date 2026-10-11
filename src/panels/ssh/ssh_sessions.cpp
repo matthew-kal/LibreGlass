@@ -6,27 +6,37 @@
 
 
 extern "C" {
-    // Create a monitor for login changes in the requested category.
-    // Release the monitor and close its file descriptor.
-    // Get the monitor's file descriptor for the event loop.
-    // Get the events the event loop should watch for.
-    // Get the monitor's next wakeup time, if any.
-    // Clear a pending monitor wakeup after handling it.
-    // Get the login session IDs for a user.
-    // Get the PAM service that registered a session, such as sshd.
-    // Get a session's state, such as active or closing.
+    /// Create a monitor for login changes in the requested category.
     int sd_login_monitor_new(const char*, sd_login_monitor**);
+
+    /// Release the monitor and close its file descriptor.
     sd_login_monitor* sd_login_monitor_unref(sd_login_monitor*);
+
+    /// Get the monitor's file descriptor for the event loop.
     int sd_login_monitor_get_fd(sd_login_monitor*);
+
+    /// Get the events the event loop should watch for.
     int sd_login_monitor_get_events(sd_login_monitor*);
+
+    // sd-login's timeout uses CLOCK_MONOTONIC, independent of C++ clock epochs. - fucking stupid
+    /// Get the monitor's next wakeup time, if any.
     int sd_login_monitor_get_timeout(sd_login_monitor*, std::uint64_t*);
+
+    /// Clear a pending monitor wakeup after handling it.
     int sd_login_monitor_flush(sd_login_monitor*);
+
+    /// Get the login session IDs for a user.
     int sd_uid_get_sessions(uid_t, int, char***);
+
+    /// Get the PAM service that registered a session, such as sshd.
     int sd_session_get_service(const char*, char**);
+
+    /// Get a session's state, such as active or closing.
     int sd_session_get_state(const char*, char**);
 }
 
 SshSessions::~SshSessions() { sd_login_monitor_unref(monitor_); }
+
 bool SshSessions::initialize()
 {
     uid_ = getuid();
@@ -35,13 +45,6 @@ bool SshSessions::initialize()
 
 int SshSessions::fd() const noexcept { return sd_login_monitor_get_fd(monitor_); }
 int SshSessions::events() const noexcept { return sd_login_monitor_get_events(monitor_); }
-
-std::uint64_t SshSessions::timeout() const noexcept
-{
-    std::uint64_t value = UINT64_MAX;
-    sd_login_monitor_get_timeout(monitor_, &value);
-    return value;
-}
 
 std::optional<unsigned> SshSessions::refresh() noexcept
 {
