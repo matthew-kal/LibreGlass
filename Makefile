@@ -1,8 +1,11 @@
 CXX := g++
 CXXFLAGS := -std=c++20 -O3 -Wall -Wextra $(shell pkg-config --cflags libdrm)
+CXXFLAGS += -pthread
 LDLIBS := $(shell pkg-config --libs libdrm) -l:libsystemd.so.0
+PHOTO_LIBS := -l:libgdk_pixbuf-2.0.so.0 -l:libgobject-2.0.so.0
 
-SOURCES := main.cpp src/panels/process/process_panel.cpp src/panels/process/kernel_stats.cpp src/panels/ssh/ssh_sessions.cpp src/drm_device.cpp src/drm_buffer.cpp src/buffer_access.cpp src/renderer.cpp src/region_canvas.cpp src/panels/ssh/ssh_panel.cpp src/panels/weather/weather_panel.cpp
+SOURCES := main.cpp src/panels/globe/globe_panel.cpp src/panels/process/process_panel.cpp src/panels/process/kernel_stats.cpp src/panels/ssh/ssh_sessions.cpp src/drm_device.cpp src/drm_buffer.cpp src/buffer_access.cpp src/renderer.cpp src/region_canvas.cpp src/panels/ssh/ssh_panel.cpp src/panels/weather/weather_panel.cpp
+SOURCES += src/panels/photos/photo_loader.cpp src/panels/photos/photo_panel.cpp
 BUILD_DIR ?= build
 OBJECTS := $(addprefix $(BUILD_DIR)/,$(SOURCES:.cpp=.o))
 TARGET := $(BUILD_DIR)/libre-glass
@@ -18,7 +21,7 @@ TEST_WRAPS := open close drmIsMaster drmSetMaster drmModeGetResources drmModeFre
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS) $(LDLIBS) -o $@
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS) $(LDLIBS) $(PHOTO_LIBS) -o $@
 
 $(BUILD_DIR)/%.o: %.cpp Makefile
 	mkdir -p $(@D)
@@ -38,13 +41,20 @@ PROCESS_TEST_OBJECTS := $(BUILD_DIR)/tests/process_panel_test.o $(BUILD_DIR)/src
 $(BUILD_DIR)/process-panel-test: $(PROCESS_TEST_OBJECTS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-test: $(BUILD_DIR)/process-panel-test $(TEST_TARGET) $(RENDERER_TEST_TARGET) $(BUILD_DIR)/ssh-sessions-test
+PHOTO_TEST_OBJECTS := $(BUILD_DIR)/tests/photo_panel_test.o $(BUILD_DIR)/src/panels/photos/photo_loader.o $(BUILD_DIR)/src/panels/photos/photo_panel.o $(BUILD_DIR)/src/renderer.o $(BUILD_DIR)/src/region_canvas.o
+
+$(BUILD_DIR)/photo-panel-test: $(PHOTO_TEST_OBJECTS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(PHOTO_LIBS) -o $@
+
+test: $(BUILD_DIR)/photo-panel-test $(BUILD_DIR)/process-panel-test $(TEST_TARGET) $(RENDERER_TEST_TARGET) $(BUILD_DIR)/ssh-sessions-test
 	$(TEST_TARGET)
 	$(RENDERER_TEST_TARGET)
 	$(BUILD_DIR)/ssh-sessions-test
 	$(BUILD_DIR)/process-panel-test
+	$(BUILD_DIR)/photo-panel-test
 
 -include $(BUILD_DIR)/tests/ssh_sessions_test.d $(BUILD_DIR)/tests/process_panel_test.d
+-include $(BUILD_DIR)/tests/photo_panel_test.d
 
 -include $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d) $(RENDERER_TEST_OBJECTS:.o=.d)
 

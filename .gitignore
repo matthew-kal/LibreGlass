@@ -1,8 +1,10 @@
 /build
 
 /docs
-/tests
+/tests/*
+!/tests/photo_panel_test.cpp
 /tmp
+/photos/
 
 AGENTS.md
 /.agents 

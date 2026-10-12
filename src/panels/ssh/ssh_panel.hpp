@@ -4,7 +4,7 @@
 
 class SshPanel final : public Panel {
 public:
-    static constexpr std::size_t index = 4;
+    static constexpr std::size_t index = 1;
     void setConnected(bool connected, Clock::time_point now) noexcept;
     bool update(Clock::time_point now) noexcept override;
     Clock::time_point nextUpdate() const noexcept override { return next_; }

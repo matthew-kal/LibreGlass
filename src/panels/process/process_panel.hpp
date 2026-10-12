@@ -6,7 +6,7 @@
 
 class ProcessPanel final : public Panel {
 public:
-    static constexpr std::size_t index = 1;
+    static constexpr std::size_t index = 2;
     //QA
     explicit ProcessPanel(const DrmDevice& device, const char* procRoot="/proc") noexcept
         : device_(device), reader_(procRoot) {}

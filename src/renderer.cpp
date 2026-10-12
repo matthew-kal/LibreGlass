@@ -5,8 +5,7 @@
 namespace {
 // Physical 1920x1080, logical 1080x1920. Fixed 3x3 layout.
 constexpr Rectangle slot(std::size_t index) {
-    return {33 + static_cast<std::uint32_t>(index % 3) * 349,
-            33 + static_cast<std::uint32_t>(index / 3) * 629, 316, 596};
+    return Renderer::panelBounds(index);
 }
 }
 

@@ -1,8 +1,11 @@
 #include "src/drm_device.hpp"
+#include "src/panels/globe/globe_panel.hpp"
 #include "src/panels/ssh/ssh_panel.hpp"
 #include "src/renderer.hpp"
 #include "src/panels/process/process_panel.hpp"
 #include "src/panels/ssh/ssh_sessions.hpp"
+#include "src/panels/photos/photo_panel.hpp"
+#include "src/panels/white/white_panel.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
@@ -17,9 +20,23 @@
 
 int main(int argc, char** argv)
 {
-    if (argc > 2 || (argc == 2 && std::strcmp(argv[1], "--help") == 0)) {
-        std::cout << "Usage: " << argv[0] << " [/dev/dri/cardN]\n";
-        return argc > 2 ? 1 : 0;
+    const char* devicePath = "/dev/dri/card1";
+    const char* photoDirectory = nullptr;
+    bool haveDevice = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--help") == 0) {
+            std::cout << "Usage: " << argv[0] << " [/dev/dri/cardN] [--photos directory]\n";
+            return 0;
+        }
+        if (std::strcmp(argv[i], "--photos") == 0 && i + 1 < argc) {
+            photoDirectory = argv[++i];
+        } else if (argv[i][0] != '-' && !haveDevice) {
+            devicePath = argv[i];
+            haveDevice = true;
+        } else {
+            std::cerr << "Usage: " << argv[0] << " [/dev/dri/cardN] [--photos directory]\n";
+            return 1;
+        }
     }
 
     // Create an initially empty signal set
@@ -54,7 +71,15 @@ int main(int argc, char** argv)
     // Keep an SshPanel reference for downstream connection updates.
     auto panel = std::make_unique<SshPanel>();
     auto& ssh = *panel; 
-    Renderer renderer{std::move(panel), std::make_unique<ProcessPanel>(device)};
+    const auto photoPath = photoDirectory ? std::filesystem::absolute(photoDirectory).lexically_normal() :
+                                          defaultPhotoDirectory("/proc/self/exe");
+    std::cout << "Photo directory: " << photoPath << '\n';
+    PhotoLoader photoLoader{photoPath};
+    auto photoPanel = std::make_unique<PhotoPanel>(photoLoader);
+    auto& photos = *photoPanel;
+    Renderer renderer{std::make_unique<GlobePanel>(), std::move(panel),
+                      std::make_unique<ProcessPanel>(device), std::move(photoPanel),
+                      std::make_unique<WhitePanel>()};
 
     // Determine if this user has SSH sessions before the display loop begins.
     // sessions.refresh() returns std::optional; its overloaded operator *
@@ -63,9 +88,9 @@ int main(int argc, char** argv)
     if (!initial) { std::cerr << "Could not read SSH sessions.\n"; return 1; }
     ssh.setConnected(*initial != 0, Panel::Clock::now());
 
-    if (!device.initialize(argc == 2 ? argv[1] : "/dev/dri/card1")) return 1;
+    if (!device.initialize(devicePath)) return 1;
 
-    enum class EventSource : std::uint32_t { Signal, Display, Ssh };
+    enum class EventSource : std::uint32_t { Signal, Display, Ssh, Photos };
     const int epollFd = epoll_create1(EPOLL_CLOEXEC);
     if (epollFd < 0) {
         std::cerr << "Could not create event monitor: " << std::strerror(errno) << '\n';
@@ -88,8 +113,15 @@ int main(int argc, char** argv)
     static_assert(POLLIN == EPOLLIN && POLLPRI == EPOLLPRI && POLLOUT == EPOLLOUT);
     if (!watch(signalFd, EPOLLIN, EventSource::Signal) ||
         !watch(device.eventFd(), EPOLLIN, EventSource::Display) ||
-        !watch(sessions.fd(), static_cast<std::uint32_t>(sessionEvents), EventSource::Ssh)) return 1;
-    epoll_event events[3]{};
+        !watch(sessions.fd(), static_cast<std::uint32_t>(sessionEvents), EventSource::Ssh) ||
+        !watch(photoLoader.eventFd(), EPOLLIN, EventSource::Photos)) return 1;
+    try {
+        photoLoader.start();
+    } catch (const std::exception& error) {
+        std::cerr << "Could not start photo loader: " << error.what() << '\n';
+        return 1;
+    }
+    epoll_event events[4]{};
 
     bool running = true, failed = false;
     auto nextDisplayConnectionCheck = Panel::Clock::now();
@@ -130,10 +162,10 @@ int main(int argc, char** argv)
         // Include the pending page flip's two-second completion deadline.
         if (device.flipPending()) deadline = std::min(deadline, flipStarted + std::chrono::seconds(2));
         auto pollWait = std::max<long long>(0,
-            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Panel::Clock::now()).count());
+            std::chrono::ceil<std::chrono::milliseconds>(deadline - Panel::Clock::now()).count());
             
         // Wait for termination signals, DRM completion events, or login-session changes.
-        const int result = epoll_wait(epollFd, events, 3, static_cast<int>(pollWait));
+        const int result = epoll_wait(epollFd, events, 4, static_cast<int>(pollWait));
         if (result < 0) {
             if (errno == EINTR) continue;
             std::cerr << "Could not wait for events: " << std::strerror(errno) << '\n';
@@ -169,10 +201,17 @@ int main(int argc, char** argv)
                 ssh.setConnected(*count != 0, Panel::Clock::now());
                 break;
             }
+            case EventSource::Photos: {
+                auto snapshot = photoLoader.take();
+                if (snapshot && photos.accept(std::move(*snapshot), Panel::Clock::now()))
+                    renderer.invalidate<PhotoPanel::index>();
+                break;
+            }
             }
         }
         if (failed) break;
     }
     const bool released = device.shutdown();
+    photoLoader.stop();
     return !failed && released ? 0 : 1;
 }

@@ -1,5 +1,6 @@
 #include "process_panel.hpp"
 #include "../../region_canvas.hpp"
+#include "../../renderer.hpp"
 #include "../stack_depth.hpp"
 #include <algorithm>
 #include <cmath>
@@ -7,68 +8,94 @@
 
 namespace {
 // Match the SSH ornament: warm ivory strokes and black negative space.
-constexpr unsigned white=0xf2f0e9, dim=white, cyan=white;
-constexpr unsigned stackColor=white, mapColor=white, heapColor=white, textColor=white;
-void outline(RegionCanvas& canvas, unsigned x, unsigned y, unsigned w,
-             unsigned h, unsigned color=white) noexcept {
-    canvas.fillRectangle({x,y,w,1},color);
-    canvas.fillRectangle({x,y+h-1,w,1},color);
-    canvas.fillRectangle({x,y,1,h},color);
-    canvas.fillRectangle({x+w-1,y,1,h},color);
-}
-void divider(RegionCanvas& canvas, unsigned y) noexcept {
-    canvas.fillRectangle({12,y,136,1},white);
-    canvas.fillRectangle({168,y,136,1},white);
-    for (int i=0;i<5;++i) {
-        canvas.pixel(158-i,int(y)-4+i,white);
-        canvas.pixel(158+i,int(y)-4+i,white);
-        canvas.pixel(158-i,int(y)+4-i,white);
-        canvas.pixel(158+i,int(y)+4-i,white);
+constexpr unsigned white=0xf5f5f7, dim=0x929298, accent=0x8eafc2;
+constexpr unsigned card=0x121214, track=0x28282c;
+using Style=RegionCanvas::TextStyle;
+
+void rounded(RegionCanvas& canvas, int x, int y, int width, int height,
+             double radius, unsigned color) noexcept
+{
+    if (width<=0 || height<=0) return;
+    radius=std::min({radius,width*.5,height*.5});
+    const int corner=static_cast<int>(std::ceil(radius));
+    const int middle=height-2*corner;
+    if (middle>0)
+        canvas.fillRectangle({unsigned(x),unsigned(y+corner),unsigned(width),unsigned(middle)},color);
+    for (int row=0; row<corner; ++row) {
+        if (width>2*corner) {
+            canvas.fillRectangle({unsigned(x+corner),unsigned(y+row),unsigned(width-2*corner),1},color);
+            canvas.fillRectangle({unsigned(x+corner),unsigned(y+height-1-row),unsigned(width-2*corner),1},color);
+        }
+        for (int col=0; col<corner; ++col) {
+            const double dx=std::max(radius-col-.5,0.);
+            const double dy=std::max(radius-row-.5,0.);
+            const auto opacity=static_cast<unsigned char>(
+                std::clamp(radius+.5-std::sqrt(dx*dx+dy*dy),0.,1.)*255);
+            canvas.blendPixel(x+col,y+row,color,opacity);
+            if (width-1-col!=col) canvas.blendPixel(x+width-1-col,y+row,color,opacity);
+            if (height-1-row!=row) {
+                canvas.blendPixel(x+col,y+height-1-row,color,opacity);
+                if (width-1-col!=col)
+                    canvas.blendPixel(x+width-1-col,y+height-1-row,color,opacity);
+            }
+        }
     }
 }
-void sizeLabel(char* out, std::size_t capacity, std::uint64_t bytes) noexcept {
-    if (bytes>=1024ull*1024*1024) std::snprintf(out,capacity,"%.1F GIB",double(bytes)/(1024*1024*1024));
-    else if (bytes>=1024*1024) std::snprintf(out,capacity,"%.1F MIB",double(bytes)/(1024*1024));
-    else std::snprintf(out,capacity,"%.0F KIB",double(bytes)/1024);
+
+void right(RegionCanvas& canvas, int edge, int y, const char* value,
+           unsigned color=white, Style style=Style::Body) noexcept
+{
+    canvas.label(edge-RegionCanvas::textWidth(value,style),y,value,color,style);
 }
-void meter(RegionCanvas& canvas, unsigned y, double percent, unsigned color) noexcept {
-    const double level=std::clamp(percent,0.,100.)*32/100;
-    for(unsigned i=0;i<32;++i) {
-        const unsigned x=12+i*9;
-        outline(canvas,x,y,6,7,color);
-        if (double(i)<level) canvas.fillRectangle({x+2,y+2,2,3},color);
-    }
+
+void sizeLabel(char* out, std::size_t capacity, std::uint64_t bytes) noexcept
+{
+    if (bytes>=1024ull*1024*1024) std::snprintf(out,capacity,"%.1f GiB",double(bytes)/(1024*1024*1024));
+    else if (bytes>=1024*1024) std::snprintf(out,capacity,"%.1f MiB",double(bytes)/(1024*1024));
+    else std::snprintf(out,capacity,"%.0f KiB",double(bytes)/1024);
 }
-void band(RegionCanvas& canvas, unsigned y, unsigned height, const char* name,
-          const MemoryRegion& region, unsigned color, bool valid) noexcept {
-    char value[40];
-    if (valid && region.bytes) std::snprintf(value,sizeof(value),"%012llX",static_cast<unsigned long long>(region.low));
+
+void band(RegionCanvas& canvas, int y, const char* name, const MemoryRegion& region,
+          bool valid) noexcept
+{
+    rounded(canvas,16,y,284,43,7,card);
+    canvas.label(25,y+5,name,white);
+    char value[80];
+    if (valid && region.bytes) sizeLabel(value,sizeof(value),region.bytes);
     else std::snprintf(value,sizeof(value),"--");
-    canvas.text(12,int(y)+4,value,dim);
-    outline(canvas,105,y,199,height,color);
-    outline(canvas,108,y+3,193,height-6,color);
-    canvas.text(115,int(y)+7,name,color);
-    if (valid) sizeLabel(value,sizeof(value),region.bytes);
-    else std::snprintf(value,sizeof(value),"UNAVAILABLE");
-    canvas.text(115,int(y)+23,value,color);
+    right(canvas,291,y+5,value,dim);
+    if (valid && region.bytes)
+        std::snprintf(value,sizeof(value),"0x%llx - 0x%llx",
+            static_cast<unsigned long long>(region.low),
+            static_cast<unsigned long long>(region.high));
+    else std::snprintf(value,sizeof(value),"--");
+    canvas.label(25,y+23,value,dim,Style::Address);
 }
-void gap(RegionCanvas& canvas,unsigned y,unsigned height,bool down) noexcept {
-    for (unsigned row=0;row<height;row+=4) {
-        canvas.fillRectangle({105,y+row,1,2},dim);
-        canvas.fillRectangle({303,y+row,1,2},dim);
-    }
-    const unsigned x=284;
-    canvas.fillRectangle({x,y+2,1,height-4},dim);
-    for(unsigned i=0;i<4;++i)
-        canvas.fillRectangle({x-i,down ? y+height-5-i : y+3+i,1+2*i,1},dim);
-}
-const char* roleName(DrmDevice::BufferRole role) noexcept {
+
+const char* roleName(DrmDevice::BufferRole role) noexcept
+{
     switch(role) {
-    case DrmDevice::BufferRole::Front: return "FRONT";
-    case DrmDevice::BufferRole::Pending: return "PENDING";
-    case DrmDevice::BufferRole::Drawing: return "DRAWING";
-    case DrmDevice::BufferRole::Available: return "BACK";
-    default: return "UNMAPPED";
+    case DrmDevice::BufferRole::Front: return "Front";
+    case DrmDevice::BufferRole::Pending: return "Pending";
+    case DrmDevice::BufferRole::Drawing: return "Drawing";
+    case DrmDevice::BufferRole::Available: return "Back";
+    default: return "Unmapped";
+    }
+}
+
+void bufferMap(RegionCanvas& canvas, int x, int y) noexcept
+{
+    constexpr int width=132, height=75;
+    rounded(canvas,x,y,width,height,5,track);
+    for (std::size_t i=0; i<Renderer::PanelCount; ++i) {
+        const auto bounds=Renderer::panelBounds(i);
+        const int left=x+int(bounds.y)*width/1920;
+        const int top=y+int(1080-bounds.x-bounds.width)*height/1080;
+        const int w=int(bounds.height)*width/1920;
+        const int h=int(bounds.width)*height/1080;
+        rounded(canvas,left,top,w,h,3,card);
+        char number[4]; std::snprintf(number,sizeof(number),"%zu",i);
+        canvas.label(left+(w-RegionCanvas::textWidth(number))/2,top+(h-14)/2,number,white);
     }
 }
 }
@@ -117,89 +144,74 @@ void ProcessPanel::paint(RegionCanvas& canvas) const noexcept
     // Telemetry is consumed by the next update; this paint's snapshot stays fixed.
     StackDepth::observe();
     const auto& s=snapshot_;
-    char line[80], value[32];
-    canvas.text(117,12,"PROCESS",white,2);
-    // Paired angular corners echo the SSH panel's split ornament strokes.
-    for(unsigned inset : {0u,5u}) {
-        canvas.fillRectangle({12+inset,10+inset,27-inset,2},white);
-        canvas.fillRectangle({12+inset,10+inset,2,17-inset},white);
-        canvas.fillRectangle({277,10+inset,27-inset,2},white);
-        canvas.fillRectangle({302-inset,10+inset,2,17-inset},white);
-    }
-    std::snprintf(line,sizeof(line),"LIBREGLASS / PID %u",s.pid);
-    canvas.text(12,34,line,dim);
-    if(s.cpuReady) std::snprintf(line,sizeof(line),"SYSTEM CPU %.1F%%",s.cpuPercent);
-    else std::snprintf(line,sizeof(line),"SYSTEM CPU %s",s.cpuValid ? "WARMUP" : "UNAVAILABLE");
-    canvas.text(12,56,line,white);
-    meter(canvas,72,s.cpuReady ? s.cpuPercent : 0,cyan);
-    const double ramPercent=s.ramValid ? 100.*double(s.ramUsed)/s.ramTotal : 0;
-    if(s.ramValid) {
-        sizeLabel(value,sizeof(value),s.ramUsed);
-        std::snprintf(line,sizeof(line),"RAM %.1F%% / %s",ramPercent,value);
-    } else std::snprintf(line,sizeof(line),"RAM UNAVAILABLE");
-    canvas.text(12,90,line,white); meter(canvas,106,ramPercent,stackColor);
-    if(s.faultsReady) std::snprintf(line,sizeof(line),"SELF CPU %.1F%% / %u THREADS",s.processCpuPercent,s.threads);
-    else std::snprintf(line,sizeof(line),"SELF CPU -- / %u THREADS",s.threads);
-    canvas.text(12,124,line,dim);
-    divider(canvas,140);
-    canvas.text(12,150,"ADDRESS",dim); canvas.text(105,150,"VIRTUAL SPACE / SCHEMATIC",dim);
-    band(canvas,171,39,"STACK DEPTH",s.stack,stackColor,s.mapsValid);
-    canvas.fillRectangle({114,193,162,9},0);
-    if (s.stackDepthValid) {
-        std::snprintf(value,sizeof(value),"%.1FK / %.0FK VIEW",
-            double(s.stackDepth)/1024,stackScale_/1024);
-        const unsigned depth=static_cast<unsigned>(std::lround(
-            std::clamp(displayedStackDepth_/stackScale_,0.,1.)*24));
-        // The occupied span grows downward, matching the stack's direction.
-        outline(canvas,282,177,16,26,stackColor);
-        if (depth) canvas.fillRectangle({284,178,12,depth},stackColor);
-        canvas.fillRectangle({278,178+depth,23,1},stackColor);
-    } else std::snprintf(value,sizeof(value),"DEPTH UNAVAILABLE");
-    canvas.text(115,194,value,stackColor);
-    gap(canvas,210,16,true);
-    band(canvas,226,49,"MMAP / LIBS / DATA",s.mappings,mapColor,s.mapsValid);
-    gap(canvas,275,24,false);
-    band(canvas,299,39,"HEAP [BRK]",s.heap,heapColor,s.mapsValid);
-    gap(canvas,338,13,false);
-    band(canvas,351,39,"TEXT [EXECUTABLE]",s.text,textColor,s.mapsValid);
+    char line[96], value[32], total[32];
+    canvas.label(16,22,"CPU",white,Style::Heading);
+    if (s.cpuReady) std::snprintf(value,sizeof(value),"%.1f%%",s.cpuPercent);
+    else std::snprintf(value,sizeof(value),"--");
+    right(canvas,300,12,value,white,Style::Value);
     // Latest 32 system CPU samples, oldest at the left.
-    for(unsigned i=0;i<history_.size();++i) {
-        const unsigned height=static_cast<unsigned>(std::clamp(history_[i],0.f,100.f)*.16f);
-        if(height) outline(canvas,12+i*9,414-height,6,height,cyan);
+    for (std::size_t i=1; i<history_.size(); ++i) {
+        const double start=std::clamp(double(history_[i-1]),0.,100.)*.30;
+        const double end=std::clamp(double(history_[i]),0.,100.)*.30;
+        for (int x=0; x<9; ++x) {
+            const double y=78-(start+(end-start)*x/9);
+            const int row=int(std::floor(y));
+            const double fraction=y-row;
+            canvas.blendPixel(16+int(i-1)*9+x,row,accent,
+                static_cast<unsigned char>((1-fraction)*255));
+            canvas.blendPixel(16+int(i-1)*9+x,row+1,accent,
+                static_cast<unsigned char>(fraction*255));
+        }
     }
-    sizeLabel(value,sizeof(value),s.rss);
-    if(s.processValid) std::snprintf(line,sizeof(line),"RSS %s",value);
-    else std::snprintf(line,sizeof(line),"RSS UNAVAILABLE");
-    canvas.text(12,423,line,white);
-    sizeLabel(value,sizeof(value),s.virtualBytes);
-    if(s.processValid) std::snprintf(line,sizeof(line),"VIRTUAL %s",value);
-    else std::snprintf(line,sizeof(line),"VIRTUAL UNAVAILABLE");
-    canvas.text(166,423,line,dim);
-    if(s.mapsValid && s.mapLimitValid) std::snprintf(line,sizeof(line),"VMAS %u / %u",s.mapCount,s.mapLimit);
-    else if(s.mapsValid) std::snprintf(line,sizeof(line),"VMAS %u / --",s.mapCount);
-    else std::snprintf(line,sizeof(line),"VMAS UNAVAILABLE");
-    canvas.text(12,440,line,dim);
-    sizeLabel(value,sizeof(value),s.swap);
-    std::snprintf(line,sizeof(line),"SWAP %s",s.processValid ? value : "--");
-    canvas.text(166,440,line,dim);
-    if(s.faultsReady) std::snprintf(line,sizeof(line),"FAULTS/S MIN %.0F MAJ %.0F",s.minorFaultsPerSecond,s.majorFaultsPerSecond);
-    else std::snprintf(line,sizeof(line),"FAULTS/S MIN -- MAJ --");
-    canvas.text(12,457,line,dim);
-    for(unsigned i=0;i<buffers_.size();++i) {
-        const auto& b=buffers_[i]; const unsigned y=476+i*39;
-        outline(canvas,12,y,292,34);
-        sizeLabel(value,sizeof(value),b.bytes);
-        std::snprintf(line,sizeof(line),"DRM %c / %s / %s",'A'+i,roleName(b.role),value);
-        canvas.text(19,int(y)+5,line,cyan);
-        if(b.role!=DrmDevice::BufferRole::Unmapped)
-            std::snprintf(line,sizeof(line),"%012llX-%012llX",
-                static_cast<unsigned long long>(b.address),static_cast<unsigned long long>(b.address+b.bytes));
-        else std::snprintf(line,sizeof(line),"NO DEVICE MAPPING");
-        canvas.text(19,int(y)+19,line,dim);
+    canvas.label(16,102,"RAM",white,Style::Heading);
+    const double ramPercent=s.ramValid ? 100.*double(s.ramUsed)/s.ramTotal : 0;
+    if (s.ramValid) std::snprintf(value,sizeof(value),"%.1f%%",ramPercent);
+    else std::snprintf(value,sizeof(value),"--");
+    right(canvas,300,92,value,white,Style::Value);
+    rounded(canvas,16,128,284,5,2.5,track);
+    const int filled=int(std::lround(std::clamp(ramPercent,0.,100.)*284/100));
+    if (filled) rounded(canvas,16,128,filled,5,std::min(2.5,filled*.5),accent);
+    if (s.ramValid) {
+        sizeLabel(value,sizeof(value),s.ramUsed);
+        sizeLabel(total,sizeof(total),s.ramTotal);
+        std::snprintf(line,sizeof(line),"%s / %s",value,total);
+    } else std::snprintf(line,sizeof(line),"--");
+    canvas.label(16,139,line,dim);
+    // Paired angular corners echo the SSH panel's split ornament strokes.
+    canvas.fillRectangle({16,169,284,1},track);
+    canvas.label(16,181,"Process memory",white,Style::Heading);
+    if (s.processValid) {
+        sizeLabel(value,sizeof(value),s.rss);
+        std::snprintf(line,sizeof(line),"%s resident",value);
+    } else std::snprintf(line,sizeof(line),"--");
+    right(canvas,300,183,line,dim);
+    band(canvas,209,"Stack",s.stack,s.mapsValid);
+        // The occupied span grows downward, matching the stack's direction.
+    const unsigned depth=static_cast<unsigned>(std::lround(
+        std::clamp(s.stack.bytes ? displayedStackDepth_/s.stack.bytes : 0.,0.,1.)*268));
+    canvas.fillRectangle({24,247,268,2},track);
+    if (s.stackDepthValid && depth) canvas.fillRectangle({24,247,depth,2},accent);
+    band(canvas,258,"Mapped memory",s.mappings,s.mapsValid);
+    band(canvas,307,"Heap",s.heap,s.mapsValid);
+    band(canvas,356,"Executable",s.text,s.mapsValid);
+    canvas.label(16,416,"Buffers",white,Style::Heading);
+    for (std::size_t i=0; i<buffers_.size(); ++i) {
+        const auto& buffer=buffers_[i];
+        const int x=16+int(i)*152;
+        std::snprintf(line,sizeof(line),"Buffer %c",'A'+int(i));
+        canvas.label(x,444,line,white);
+        right(canvas,x+132,444,roleName(buffer.role),dim);
+        bufferMap(canvas,x,465);
+        if (buffer.role!=DrmDevice::BufferRole::Unmapped) {
+            sizeLabel(value,sizeof(value),buffer.bytes);
+            canvas.label(x,547,value,dim);
+            std::snprintf(line,sizeof(line),"0x%llx",static_cast<unsigned long long>(buffer.address));
+            canvas.label(x,564,line,dim,Style::Address);
+            std::snprintf(line,sizeof(line),"0x%llx",static_cast<unsigned long long>(buffer.address+buffer.bytes));
+            canvas.label(x,578,line,dim,Style::Address);
+        } else {
+            canvas.label(x,547,"--",dim);
+            canvas.label(x,564,"--",dim,Style::Address);
+        }
     }
-    if(s.loadValid && s.uptimeValid) std::snprintf(line,sizeof(line),"LOAD %.2F / UP %.1F H",s.load,s.uptime/3600);
-    else std::snprintf(line,sizeof(line),"LOAD / UPTIME UNAVAILABLE");
-    divider(canvas,557);
-    canvas.text(12,566,line,dim);
-    canvas.text(12,583,"1 HZ METRICS / 30 HZ STACK",dim);
 }

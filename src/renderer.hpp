@@ -15,6 +15,12 @@ public:
     // 3x3 grid of panels on the mirror
     static constexpr std::size_t PanelCount = 9;
 
+    static constexpr Rectangle panelBounds(std::size_t index) noexcept
+    {
+        return {33 + static_cast<std::uint32_t>(index % 3) * 349,
+                33 + static_cast<std::uint32_t>(index / 3) * 629, 316, 596};
+    }
+
     // Check supplied panel types and slot indices at compile time
     // Transfer ownership to the Renderer when those checks succeed
     template <typename... PanelTypes>
@@ -46,6 +52,12 @@ public:
 
     bool paint(FrameView frame) const noexcept;
     bool render(FrameView frame) noexcept;
+    template <std::size_t Index>
+    void invalidate() noexcept
+    {
+        static_assert(Index < PanelCount);
+        ++revisions_[Index];
+    }
 
     // Returns: current panel revisions differ from last submitted revisions
     bool pending() const noexcept { return submitted_ != revisions_; }
